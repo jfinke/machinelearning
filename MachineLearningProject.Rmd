@@ -5,24 +5,158 @@ date: "August 22, 2015"
 output: html_document
 ---
 
-# Executve Overview
+# Executive Overview
 
 The purpose of this project is to develop a machine learning model to acurately predict the outcome of a dataset. The dataset in question is data from an experiment for Human Activity Recognition (HAR). The experiment is outlined at:  http://groupware.les.inf.puc-rio.br/har  
 
-The experiment utilized six particpants outfitted with accelerometers to perform lightweight dumbell curls with five different methods (classes). The goal of this project was to determine what the method was for the activity.  The model developed had an accuracy rating of 99.1% with a full 20/20 correct for the related submission.
+The experiment utilized six particpants outfitted with accelerometers to perform lightweight dumbell curls with five different methods (classes). The goal of this project was to determine what the method was for the activity.  The model developed had an accuracy rating of 99.1% on the training data set and 99.6% on the test data set with a full 20/20 correct for the related submission.
 
 # Data Loading
 The data was manually downloaded from: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv in order to have a local copy and put into the repository.
 
 It was then loaded in by:
-```{r}
+```{r cache=TRUE}
 pml.training <- read.csv("~/machinelearning/pml-training.csv")
+dim(pml.training)
 ```
 
 # Data Cleaning
+The data is somewhat messy.  There are many columns with NA values.  Also, there are some rows that have divide by zero and other issues.
+
+To remove the NA values, I performe a sum of the NAs.  Any columns that had less than 19000 NAs, I kept.  The dataset was 19622 observations large.
+
+```{r cache=TRUE}
+keep<-colSums(is.na(pml.training)) < 19000
+
+pml<-pml.training[,keep]
+
+```
+
+Then I eliminated columns that contained meta data and other messy information.
+```{r cache=TRUE, warning=FALSE}
+keep2<-sapply(pml, function(x) sum(x == ''))
+keep3<-keep2 < 100
+pml<-pml[,keep3]
+
+library(plyr); library(dplyr)
+pml<-select(pml, -(X:num_window))
+```
+
+At that point I had a much cleaner version of the dataset and smaller.  Note we went from 160 variables to 53 variables.
+```{r cache=TRUE, warning=FALSE}
+dim(pml)
+```
 
 
 # Data Modeling
+Based on the class information and the information presented in the actual paper, I decided to try two different modeling procedures.  The first was a random forest technique.  The second was a boosting technique.
+
+First I set the seed and loaded the caret library.
+```{r cache=TRUE, warning=FALSE}
+set.seed(12345)
+library(caret); library(lattice); library(ggplot2); library(doParallel); library(randomForest);library(gbm);library(survival);library(splines)
+registerDoParallel(cores=2) # For a two core machine.  Model was originally done on 12 core machine.
+```
+
+Then I partitioned the data set up into a 70% training set and a 30% testing set.
+```{r cache=TRUE, warning=FALSE}
+InTrain<-createDataPartition(y=pml$classe,p=0.7,list=FALSE)
+training1<-pml[InTrain,]
+testing1<-pml[-InTrain,]
+```
+
+
+## Random Forest
+The first model I tried was a Random Forest model.  This is the model originally used by the authors of the paper. 
+
+```{r cache=TRUE, warning=FALSE}
+my_model_file <- "rf_model.Rds"
+if (file.exists(my_model_file)) {
+    # Read the model in and assign it to a variable.
+    rf_model <- readRDS(my_model_file)
+} else {
+    # Otherwise, run the training.
+    rf_model<-train(classe ~ .,data=training1, method="rf", trControl=trainControl(method="cv",number=5), prox=TRUE,allowParallel=TRUE)
+}
+
+
+```
+
+Random Forest uses a built in cross validation process to build the best model. The model came up with a 99.1% accuracy on the training data set.
+```{r cache=TRUE, warning=FALSE}
+rf_model$results
+```
+
+
+Then I ran the model against the test 30% data set.
+```{r cache=TRUE, warning=FALSE}
+predictions<-predict(rf_model, testing1)
+confusionMatrix(predictions, testing1$classe)$table
+confusionMatrix(predictions, testing1$classe)$overall
+```
+
+As we can see from the confusion matrix, the model is quite accurate at 99.6% accuracy.  It got 24 values incorrect.
+
+### Boosting
+The second model type I tried was a Boosting model with gbm.  I used the same training and test data sets as I did for the Random Forest model.  I also just used the default values to see what kind of results I would get.
+
+```{r cache=TRUE, warning=FALSE}
+my_model_file2 <- "boostFit.Rds"
+if (file.exists(my_model_file2)) {
+    # Read the model in and assign it to a variable.
+    boostFit <- readRDS(my_model_file2)
+} else {
+    # Otherwise, run the training.
+    boostFit<-train(classe ~ ., method="gbm", data=training1,verbose=FALSE)
+}
+
+
+```
+
+Here is the output of that model. The column labeled "Accuracy" is the overall accuracy rate averaged over cross-validation iterations.
+```{r cache=TRUE, warning=FALSE}
+print(boostFit)
+
+```
+
+Then I ran the model against the test 30% data set.
+```{r cache=TRUE, warning=FALSE}
+predictboost<-predict(boostFit, testing1)
+confusionMatrix(predictboost, testing1$classe)$table
+confusionMatrix(predictboost, testing1$classe)$overall
+
+```
+
+As we can see from the confusion matrix, the model is a little less accurate at 96.2% accuracy.  It got 189 values incorrect.
 
 
 # Conclusion
+Without doing much of anything outside of cleaning the data, I was able to build two seperate types of models that got 99% and 96% accuracy.  Both of these models provided excellent accuracy results.  In fact, when using both of the models to predict the unknown classe of the 20 observation data set for the submission part of this project, they were both the same.
+
+Here I load the data and clean it so we have the same columns as the training dataset.
+```{r cache=TRUE, warning=FALSE}
+pml.testing <- read.csv("~/machinelearning/pml-testing.csv")
+trainingcols<-colnames(pml)
+trainingcols<-trainingcols[-length(trainingcols)]
+output<-pml.testing[,trainingcols]
+
+```
+
+Then I can use the models to predic the values of the classe variable for each of the 20 observations.  The classe variable prediction is the same for the 20 observations.
+
+```{r cache=TRUE, warning=FALSE}
+bf<-predict(boostFit, newdata=output)
+rf<-predict(rf_model, newdata=output)
+print(bf)
+print(rf)
+setdiff(bf, rf)
+```
+
+Interestingly enough, the instructor has mentioned on multiple occasions the Netflix challenge and how the final winner was not implemented due to performance issues.  There was a significan performance difference between the two train methodoligies.  While it did not make a large difference in this case, it may with a much larger data set.
+
+```{r cache=TRUE, warning=FALSE}
+rf_model$time$everything[3]/60
+
+boostFit$time$everything[3]/60
+```
+As you can see, the Random Forest model took about three times larger to complete than the Boosting model.  This is just one data point, however.  I may be worth further investigation to determine if one model provided a better "value" in terms of performance vs. accuracy.  And while I picked Random Forest as my "preferred" model due to the higher accuracy, they both provided the same answers for the test set.  So maybe the Boosting model was just good enough.

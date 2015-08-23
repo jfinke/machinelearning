@@ -68,25 +68,178 @@ img {
 </div>
 
 
-<div id="executve-overview" class="section level1">
-<h1>Executve Overview</h1>
+<div id="executive-overview" class="section level1">
+<h1>Executive Overview</h1>
 <p>The purpose of this project is to develop a machine learning model to acurately predict the outcome of a dataset. The dataset in question is data from an experiment for Human Activity Recognition (HAR). The experiment is outlined at: <a href="http://groupware.les.inf.puc-rio.br/har" class="uri">http://groupware.les.inf.puc-rio.br/har</a></p>
-<p>The experiment utilized six particpants outfitted with accelerometers to perform lightweight dumbell curls with five different methods (classes). The goal of this project was to determine what the method was for the activity. The model developed had an accuracy rating of 99.1% with a full 20/20 correct for the related submission.</p>
+<p>The experiment utilized six particpants outfitted with accelerometers to perform lightweight dumbell curls with five different methods (classes). The goal of this project was to determine what the method was for the activity. The model developed had an accuracy rating of 99.1% on the training data set and 99.6% on the test data set with a full 20/20 correct for the related submission.</p>
 </div>
 <div id="data-loading" class="section level1">
 <h1>Data Loading</h1>
 <p>The data was manually downloaded from: <a href="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" class="uri">https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv</a> in order to have a local copy and put into the repository.</p>
 <p>It was then loaded in by:</p>
-<pre class="r"><code>pml.training &lt;- read.csv(&quot;~/machinelearning/pml-training.csv&quot;)</code></pre>
+<pre class="r"><code>pml.training &lt;- read.csv(&quot;~/machinelearning/pml-training.csv&quot;)
+dim(pml.training)</code></pre>
+<pre><code>## [1] 19622   160</code></pre>
 </div>
 <div id="data-cleaning" class="section level1">
 <h1>Data Cleaning</h1>
+<p>The data is somewhat messy. There are many columns with NA values. Also, there are some rows that have divide by zero and other issues.</p>
+<p>To remove the NA values, I performe a sum of the NAs. Any columns that had less than 19000 NAs, I kept. The dataset was 19622 observations large.</p>
+<pre class="r"><code>keep&lt;-colSums(is.na(pml.training)) &lt; 19000
+
+pml&lt;-pml.training[,keep]</code></pre>
+<p>Then I eliminated columns that contained meta data and other messy information.</p>
+<pre class="r"><code>keep2&lt;-sapply(pml, function(x) sum(x == ''))
+keep3&lt;-keep2 &lt; 100
+pml&lt;-pml[,keep3]
+
+library(plyr); library(dplyr)
+pml&lt;-select(pml, -(X:num_window))</code></pre>
+<p>At that point I had a much cleaner version of the dataset and smaller. Note we went from 160 variables to 53 variables.</p>
+<pre class="r"><code>dim(pml)</code></pre>
+<pre><code>## [1] 19622    53</code></pre>
 </div>
 <div id="data-modeling" class="section level1">
 <h1>Data Modeling</h1>
+<p>Based on the class information and the information presented in the actual paper, I decided to try two different modeling procedures. The first was a random forest technique. The second was a boosting technique.</p>
+<p>First I set the seed and loaded the caret library.</p>
+<pre class="r"><code>set.seed(12345)
+library(caret); library(lattice); library(ggplot2); library(doParallel); library(randomForest);library(gbm);library(survival);library(splines)
+registerDoParallel(cores=2) # For a two core machine.  Model was originally done on 12 core machine.</code></pre>
+<p>Then I partitioned the data set up into a 70% training set and a 30% testing set.</p>
+<pre class="r"><code>InTrain&lt;-createDataPartition(y=pml$classe,p=0.7,list=FALSE)
+training1&lt;-pml[InTrain,]
+testing1&lt;-pml[-InTrain,]</code></pre>
+<div id="random-forest" class="section level2">
+<h2>Random Forest</h2>
+<p>The first model I tried was a Random Forest model. This is the model originally used by the authors of the paper.</p>
+<pre class="r"><code>my_model_file &lt;- &quot;rf_model.Rds&quot;
+if (file.exists(my_model_file)) {
+    # Read the model in and assign it to a variable.
+    rf_model &lt;- readRDS(my_model_file)
+} else {
+    # Otherwise, run the training.
+    rf_model&lt;-train(classe ~ .,data=training1, method=&quot;rf&quot;, trControl=trainControl(method=&quot;cv&quot;,number=5), prox=TRUE,allowParallel=TRUE)
+}</code></pre>
+<p>Random Forest uses a built in cross validation process to build the best model. The model came up with a 99.1% accuracy on the training data set.</p>
+<pre class="r"><code>rf_model$results</code></pre>
+<pre><code>##   mtry  Accuracy     Kappa  AccuracySD     KappaSD
+## 1    2 0.9911916 0.9888563 0.001695681 0.002145865
+## 2   27 0.9900268 0.9873837 0.002339546 0.002960124
+## 3   52 0.9859502 0.9822252 0.003179477 0.004022999</code></pre>
+<p>Then I ran the model against the test 30% data set.</p>
+<pre class="r"><code>predictions&lt;-predict(rf_model, testing1)
+confusionMatrix(predictions, testing1$classe)$table</code></pre>
+<pre><code>##           Reference
+## Prediction    A    B    C    D    E
+##          A 1674   10    0    0    0
+##          B    0 1127    7    0    0
+##          C    0    2 1017   16    0
+##          D    0    0    2  948    1
+##          E    0    0    0    0 1081</code></pre>
+<pre class="r"><code>confusionMatrix(predictions, testing1$classe)$overall</code></pre>
+<pre><code>##       Accuracy          Kappa  AccuracyLower  AccuracyUpper   AccuracyNull 
+##      0.9935429      0.9918306      0.9911478      0.9954266      0.2844520 
+## AccuracyPValue  McnemarPValue 
+##      0.0000000            NaN</code></pre>
+<p>As we can see from the confusion matrix, the model is quite accurate at 99.6% accuracy. It got 24 values incorrect.</p>
+<div id="boosting" class="section level3">
+<h3>Boosting</h3>
+<p>The second model type I tried was a Boosting model with gbm. I used the same training and test data sets as I did for the Random Forest model. I also just used the default values to see what kind of results I would get.</p>
+<pre class="r"><code>my_model_file2 &lt;- &quot;boostFit.Rds&quot;
+if (file.exists(my_model_file2)) {
+    # Read the model in and assign it to a variable.
+    boostFit &lt;- readRDS(my_model_file2)
+} else {
+    # Otherwise, run the training.
+    boostFit&lt;-train(classe ~ ., method=&quot;gbm&quot;, data=training1,verbose=FALSE)
+}</code></pre>
+<p>Here is the output of that model. The column labeled “Accuracy” is the overall accuracy rate averaged over cross-validation iterations.</p>
+<pre class="r"><code>print(boostFit)</code></pre>
+<pre><code>## Stochastic Gradient Boosting 
+## 
+## 13737 samples
+##    52 predictor
+##     5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Bootstrapped (25 reps) 
+## Summary of sample sizes: 13737, 13737, 13737, 13737, 13737, 13737, ... 
+## Resampling results across tuning parameters:
+## 
+##   interaction.depth  n.trees  Accuracy   Kappa      Accuracy SD
+##   1                   50      0.7546290  0.6887531  0.008172695
+##   1                  100      0.8219082  0.7745773  0.005045771
+##   1                  150      0.8543341  0.8156287  0.004118935
+##   2                   50      0.8567971  0.8185621  0.005337759
+##   2                  100      0.9076885  0.8831519  0.003459466
+##   2                  150      0.9314823  0.9132761  0.002990119
+##   3                   50      0.8995339  0.8727852  0.004557980
+##   3                  100      0.9417336  0.9262580  0.003275196
+##   3                  150      0.9595917  0.9488657  0.002598859
+##   Kappa SD   
+##   0.010329111
+##   0.006431697
+##   0.005194973
+##   0.006814463
+##   0.004405074
+##   0.003830381
+##   0.005803767
+##   0.004173326
+##   0.003303372
+## 
+## Tuning parameter 'shrinkage' was held constant at a value of 0.1
+## 
+## Tuning parameter 'n.minobsinnode' was held constant at a value of 10
+## Accuracy was used to select the optimal model using  the largest value.
+## The final values used for the model were n.trees = 150,
+##  interaction.depth = 3, shrinkage = 0.1 and n.minobsinnode = 10.</code></pre>
+<p>Then I ran the model against the test 30% data set.</p>
+<pre class="r"><code>predictboost&lt;-predict(boostFit, testing1)
+confusionMatrix(predictboost, testing1$classe)$table</code></pre>
+<pre><code>##           Reference
+## Prediction    A    B    C    D    E
+##          A 1652   36    0    3    2
+##          B   14 1073   32    3   16
+##          C    2   29  978   31    6
+##          D    6    1   14  922   17
+##          E    0    0    2    5 1041</code></pre>
+<pre class="r"><code>confusionMatrix(predictboost, testing1$classe)$overall</code></pre>
+<pre><code>##       Accuracy          Kappa  AccuracyLower  AccuracyUpper   AccuracyNull 
+##   9.627867e-01   9.529121e-01   9.576308e-01   9.674771e-01   2.844520e-01 
+## AccuracyPValue  McnemarPValue 
+##   0.000000e+00   1.028795e-06</code></pre>
+<p>As we can see from the confusion matrix, the model is a little less accurate at 96.2% accuracy. It got 189 values incorrect.</p>
+</div>
+</div>
 </div>
 <div id="conclusion" class="section level1">
 <h1>Conclusion</h1>
+<p>Without doing much of anything outside of cleaning the data, I was able to build two seperate types of models that got 99% and 96% accuracy. Both of these models provided excellent accuracy results. In fact, when using both of the models to predict the unknown classe of the 20 observation data set for the submission part of this project, they were both the same.</p>
+<p>Here I load the data and clean it so we have the same columns as the training dataset.</p>
+<pre class="r"><code>pml.testing &lt;- read.csv(&quot;~/machinelearning/pml-testing.csv&quot;)
+trainingcols&lt;-colnames(pml)
+trainingcols&lt;-trainingcols[-length(trainingcols)]
+output&lt;-pml.testing[,trainingcols]</code></pre>
+<p>Then I can use the models to predic the values of the classe variable for each of the 20 observations. The classe variable prediction is the same for the 20 observations.</p>
+<pre class="r"><code>bf&lt;-predict(boostFit, newdata=output)
+rf&lt;-predict(rf_model, newdata=output)
+print(bf)</code></pre>
+<pre><code>##  [1] B A B A A E D B A A B C B A E E A B B B
+## Levels: A B C D E</code></pre>
+<pre class="r"><code>print(rf)</code></pre>
+<pre><code>##  [1] B A B A A E D B A A B C B A E E A B B B
+## Levels: A B C D E</code></pre>
+<pre class="r"><code>setdiff(bf, rf)</code></pre>
+<pre><code>## character(0)</code></pre>
+<p>Interestingly enough, the instructor has mentioned on multiple occasions the Netflix challenge and how the final winner was not implemented due to performance issues. There was a significan performance difference between the two train methodoligies. While it did not make a large difference in this case, it may with a much larger data set.</p>
+<pre class="r"><code>rf_model$time$everything[3]/60</code></pre>
+<pre><code>##  elapsed 
+## 13.36763</code></pre>
+<pre class="r"><code>boostFit$time$everything[3]/60</code></pre>
+<pre><code>## elapsed 
+## 4.44185</code></pre>
+<p>As you can see, the Random Forest model took about three times larger to complete than the Boosting model. This is just one data point, however. I may be worth further investigation to determine if one model provided a better “value” in terms of performance vs. accuracy. And while I picked Random Forest as my “preferred” model due to the higher accuracy, they both provided the same answers for the test set. So maybe the Boosting model was just good enough.</p>
 </div>
 
 
